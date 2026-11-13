@@ -45,6 +45,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -138,6 +139,68 @@ public:
                consumer_.tail.load(std::memory_order_acquire);
     }
 
+    // -----------------------------------------------------------------------
+    // Producer operations (call from the single producer thread only)
+    // -----------------------------------------------------------------------
+
+    /// Copies `value` into the queue.
+    ///
+    /// @return `false` (and leaves the queue unchanged) if the queue is full.
+    ///         If the copy constructor throws, the queue is also unchanged.
+    [[nodiscard]] bool try_push(const T& value) noexcept(
+        std::is_nothrow_copy_constructible_v<T>) {
+        static_assert(std::is_copy_constructible_v<T>,
+                      "spsc_queue<T>::try_push(const T&) requires a copyable T");
+        return push_impl(value);
+    }
+
+    /// Moves `value` into the queue.
+    ///
+    /// @return `false` if the queue is full; `value` is then left untouched.
+    [[nodiscard]] bool try_push(T&& value) noexcept(std::is_nothrow_move_constructible_v<T>) {
+        static_assert(std::is_move_constructible_v<T>,
+                      "spsc_queue<T>::try_push(T&&) requires a movable T");
+        return push_impl(std::move(value));
+    }
+
+    // -----------------------------------------------------------------------
+    // Consumer operations (call from the single consumer thread only)
+    // -----------------------------------------------------------------------
+
+    /// Move-assigns the oldest element into `out` and removes it.
+    ///
+    /// @return `false` (and leaves `out` untouched) if the queue is empty.
+    ///         If the move assignment throws, the element stays enqueued.
+    [[nodiscard]] bool try_pop(T& out) noexcept(std::is_nothrow_move_assignable_v<T>) {
+        static_assert(std::is_move_assignable_v<T>,
+                      "spsc_queue<T>::try_pop(T&) requires a move-assignable T");
+        const size_type tail = consumer_.tail.load(std::memory_order_relaxed);
+        if (!readable(tail)) {
+            return false;
+        }
+        T* const element = slot(tail);
+        out = std::move(*element);
+        release_slot(element, tail);
+        return true;
+    }
+
+    /// Removes the oldest element and returns it by value.
+    ///
+    /// @return `std::nullopt` if the queue is empty. If the move constructor
+    ///         throws, the element stays enqueued.
+    [[nodiscard]] std::optional<T> try_pop() noexcept(std::is_nothrow_move_constructible_v<T>) {
+        static_assert(std::is_move_constructible_v<T>,
+                      "spsc_queue<T>::try_pop() requires a move-constructible T");
+        const size_type tail = consumer_.tail.load(std::memory_order_relaxed);
+        if (!readable(tail)) {
+            return std::nullopt;
+        }
+        T* const element = slot(tail);
+        std::optional<T> result{std::in_place, std::move(*element)};
+        release_slot(element, tail);
+        return result;
+    }
+
 private:
     // Stateless standard allocator; handles over-aligned T via aligned new.
     using allocator_type = std::allocator<T>;
@@ -197,6 +260,55 @@ private:
     [[nodiscard]] size_type next_index(size_type index) const noexcept {
         const size_type next = index + 1;
         return next == config_.slot_count ? 0 : next;
+    }
+
+    // Memory ordering protocol
+    // ------------------------
+    // Producer:  construct element in slot[head]  ->  head.store(release)
+    // Consumer:  head.load(acquire)  ->  read/destroy slot[tail]
+    //            ->  tail.store(release)
+    // Producer:  tail.load(acquire)  ->  reuse slot
+    //
+    // The release store of `head` makes the fully constructed element visible
+    // to the consumer's acquire load; the release store of `tail` guarantees
+    // the element was destroyed before the producer may overwrite the slot.
+    // Each side reads its *own* index with relaxed ordering because no other
+    // thread ever writes it.
+
+    /// Producer side: constructs a new element in place. Strong exception
+    /// guarantee: `head` is only advanced after construction succeeded.
+    template <typename... Args>
+    [[nodiscard]] bool push_impl(Args&&... args) noexcept(
+        std::is_nothrow_constructible_v<T, Args&&...>) {
+        const size_type head = producer_.head.load(std::memory_order_relaxed);
+        const size_type next = next_index(head);
+        if (next == producer_.cached_tail) {
+            producer_.cached_tail = consumer_.tail.load(std::memory_order_acquire);
+            if (next == producer_.cached_tail) {
+                return false;  // full
+            }
+        }
+        ::new (static_cast<void*>(slot(head))) T(std::forward<Args>(args)...);
+        producer_.head.store(next, std::memory_order_release);
+        return true;
+    }
+
+    /// Consumer side: whether slot `tail` holds a published element.
+    [[nodiscard]] bool readable(size_type tail) noexcept {
+        if (tail == consumer_.cached_head) {
+            consumer_.cached_head = producer_.head.load(std::memory_order_acquire);
+            if (tail == consumer_.cached_head) {
+                return false;  // empty
+            }
+        }
+        return true;
+    }
+
+    /// Consumer side: destroys the element at `tail` and hands the slot back
+    /// to the producer.
+    void release_slot(T* element, size_type tail) noexcept {
+        element->~T();
+        consumer_.tail.store(next_index(tail), std::memory_order_release);
     }
 
     producer_state producer_{};
