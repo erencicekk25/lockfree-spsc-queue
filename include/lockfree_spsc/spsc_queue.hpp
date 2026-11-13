@@ -41,6 +41,7 @@
 #define LOCKFREE_SPSC_SPSC_QUEUE_HPP
 
 #include <atomic>
+#include <cassert>
 #include <cstddef>
 #include <limits>
 #include <memory>
@@ -143,6 +144,18 @@ public:
     // Producer operations (call from the single producer thread only)
     // -----------------------------------------------------------------------
 
+    /// Constructs an element in place from `args`.
+    ///
+    /// @return `false` (and constructs nothing) if the queue is full.
+    ///         If the constructor throws, the queue is unchanged.
+    template <typename... Args>
+    [[nodiscard]] bool try_emplace(Args&&... args) noexcept(
+        std::is_nothrow_constructible_v<T, Args&&...>) {
+        static_assert(std::is_constructible_v<T, Args&&...>,
+                      "spsc_queue<T>::try_emplace: T is not constructible from Args");
+        return push_impl(std::forward<Args>(args)...);
+    }
+
     /// Copies `value` into the queue.
     ///
     /// @return `false` (and leaves the queue unchanged) if the queue is full.
@@ -199,6 +212,24 @@ public:
         std::optional<T> result{std::in_place, std::move(*element)};
         release_slot(element, tail);
         return result;
+    }
+
+    /// Zero-copy access to the oldest element.
+    ///
+    /// @return A pointer to the oldest element, or `nullptr` if the queue is
+    ///         empty. The pointer stays valid until the next call to pop().
+    [[nodiscard]] T* front() noexcept {
+        const size_type tail = consumer_.tail.load(std::memory_order_relaxed);
+        return readable(tail) ? slot(tail) : nullptr;
+    }
+
+    /// Destroys the oldest element.
+    ///
+    /// @pre front() returned a non-null pointer since the last pop().
+    void pop() noexcept {
+        const size_type tail = consumer_.tail.load(std::memory_order_relaxed);
+        assert(readable(tail) && "spsc_queue::pop() called on an empty queue");
+        release_slot(slot(tail), tail);
     }
 
 private:

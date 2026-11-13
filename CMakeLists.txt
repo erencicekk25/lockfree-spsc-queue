@@ -12,6 +12,7 @@ else()
 endif()
 
 option(SPSC_BUILD_TESTS "Build the lockfree-spsc-queue test suite" ${SPSC_IS_TOP_LEVEL})
+option(SPSC_BUILD_BENCHMARKS "Build the throughput/latency benchmarks" OFF)
 option(SPSC_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${SPSC_IS_TOP_LEVEL})
 
 # ---------------------------------------------------------------------------
@@ -44,11 +45,15 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# Tests
+# Tests and benchmarks
 # ---------------------------------------------------------------------------
 if(SPSC_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+if(SPSC_BUILD_BENCHMARKS)
+    add_subdirectory(bench)
 endif()
 
 # ---------------------------------------------------------------------------
