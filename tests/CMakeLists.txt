@@ -12,3 +12,9 @@ spsc_add_test(test_push_pop Threads::Threads)
 spsc_add_test(test_emplace)
 spsc_add_test(test_stress Threads::Threads)
 set_tests_properties(test_stress PROPERTIES TIMEOUT 300)
+
+# The README quick-start example must always compile and run.
+add_executable(example_quick_start ${PROJECT_SOURCE_DIR}/examples/quick_start.cpp)
+target_link_libraries(example_quick_start PRIVATE
+    lockfree_spsc::spsc_queue spsc_project_warnings Threads::Threads)
+add_test(NAME example_quick_start COMMAND example_quick_start)

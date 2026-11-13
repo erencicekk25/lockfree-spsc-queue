@@ -33,8 +33,9 @@ struct alignas(128) over_aligned {
 // Compile-time properties of the queue type.
 static_assert(alignof(spsc_queue<int>) >= cache_line_size,
               "queue must be cache-line aligned");
-static_assert(sizeof(spsc_queue<int>) >= 3 * cache_line_size,
-              "producer, consumer and config state must use separate cache lines");
+static_assert(sizeof(spsc_queue<int>) == 3 * cache_line_size,
+              "producer, consumer and config state must each use one cache line "
+              "(the README layout diagram documents 192 bytes)");
 static_assert(!std::is_copy_constructible_v<spsc_queue<int>>);
 static_assert(!std::is_copy_assignable_v<spsc_queue<int>>);
 static_assert(!std::is_move_constructible_v<spsc_queue<int>>);
