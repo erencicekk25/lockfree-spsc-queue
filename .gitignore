@@ -1,0 +1,19 @@
+# Build directories
+build/
+build-*/
+out/
+cmake-build-*/
+
+# IDE and editor files
+.vs/
+.vscode/
+.idea/
+*.swp
+
+# Compiler artifacts
+*.o
+*.obj
+*.exe
+*.a
+*.lib
+compile_commands.json

@@ -1,0 +1,5 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/lockfree_spsc_queueTargets.cmake")
+
+check_required_components(lockfree_spsc_queue)
